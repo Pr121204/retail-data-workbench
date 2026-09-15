@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "type": "cleaning",
+      "id": "case_001",
+      "datasets": [
+        "data/samples/products.csv",
+        "data/samples/customers.csv",
+        "data/samples/stores.csv",
+        "data/samples/orders.csv",
+        "data/samples/inventory.csv"
+      ]
+    },
+    {
+      "type": "chat",
+      "id": "case_002",
+      "datasets": [
+        "data/samples/products.csv",
+        "data/samples/customers.csv",
+        "data/samples/stores.csv",
+        "data/samples/orders.csv",
+        "data/samples/inventory.csv"
+      ],
+      "question": "What is the revenue by category?",
+      "expected": {
+        "min_result_rows": 1,
+        "expected_status": "ok"
+      }
+    },
+    {
+      "type": "join",
+      "id": "case_003",
+      "datasets": [
+        "data/samples/products.csv",
+        "data/samples/customers.csv",
+        "data/samples/stores.csv",
+        "data/samples/orders.csv",
+        "data/samples/inventory.csv"
+      ],
+      "left": "orders",
+      "right": "products"
+    },
+    {
+      "type": "cleaning",
+      "id": "case_004_cleaning_subset",
+      "datasets": [
+        "data/samples/products.csv",
+        "data/samples/customers.csv"
+      ]
+    },
+    {
+      "type": "chat",
+      "id": "case_005_chat_ambiguous",
+      "datasets": [
+        "data/samples/products.csv",
+        "data/samples/customers.csv",
+        "data/samples/stores.csv",
+        "data/samples/orders.csv",
+        "data/samples/inventory.csv"
+      ],
+      "question": "compare",
+      "expected": {
+        "expected_status": "clarification_needed"
+      }
+    },
+    {
+      "type": "cleaning",
+      "id": "case_006_broken",
+      "datasets": [
+        "data/samples/does_not_exist.csv"
+      ]
+    }
+  ]
+}

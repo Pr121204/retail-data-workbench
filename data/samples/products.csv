@@ -1,0 +1,61 @@
+product_id,product_name,category,brand,sku,price
+P001,Yoga Mat,Sports & Outdoors,Zenith,SKU-1001,177.42
+P002,Bluetooth Speaker,Electronics,Vertex,SKU-1002,23.28
+P003,Insulated Tumbler,Home & Kitchen,Aura,SKU-1003,234.18
+P004,coffee maker,Home & Kitchen ,Vertex,SKU-1004,
+P005,Cotton Hoodie,Apparel,Vertex,SKU-1005,120.23
+P006,Trail Sneakers,Footwear,Core,SKU-1006,194.34
+P007,  Canvas Tote Bag,Apparel,Zenith,SKU-1007,57.16
+P008,Fitness Tracker,Electronics,Zenith,SKU-1008,70.75
+P009,Toaster 2-Slice,Home & Kitchen,Peak,SKU-1009,213.52
+P010,Hiking Boots,Footwear,Vertex,SKU-1010,186.64
+P011,Electronic Headphones,Electronic,Nova,SKU-1011,164.89
+P012,Chef Knife 8in,Home & Kitchen,Aura,SKU-1012,57.38
+P013,Electric Kettle,Home & Kitchen,Pulse,SKU-1013,88.27
+P014,LED Desk Lamp,Home & Office,Aura,SKU-1014,208.53
+P015,Webcam HD,Electronics,Apex,SKU-1015,
+P016,Cable Organizer,Home & Office,Apex,SKU-1016,243.45
+P017,TShirt,Apparel,Pulse,SKU-1017,87.63
+P018,Casual Loafers,Footwear,Aura,SKU-1018,274.8
+P019,Hardcover Notebook,Home & Office,Zenith,SKU-1019  ,71.65
+P020,Running Shoes,Footwear,Core,SKU-1020,124.72
+P021,27-inch Monitor,Electronics,Core,SKU-1006,51.42
+P022,Coffee Maker,Home & Kitchen,Nova,SKU-1022,81.51
+P023,Noise Cancelling Earbuds,Electronics,Peak,SKU-1023,226.62
+P024,Slip-On Sandals,Footwear,Pulse,SKU-1024,270.36
+P025,Camping Tent,Sports & Outdoors,Pulse,SKU-1025,114.97
+P026,Smart Watch,Electronics,Nova,SKU-1026,157.75
+P027,T-Shirt,Apparel,Vertex,SKU-1027,229.17
+P028,Trekking Poles,Sports & Outdoors,Vertex,SKU-1028,
+P029,USB-C Cable,Electronics,Nova,SKU-1029,239.69
+P030,Desk Pad Felt,Home & Office,Pulse,SKU-1030,182.95
+P031,Baseball Cap,Apparel,Pulse,SKU-1031,120.66
+P032,Gaming Mouse,Electronics,Core,SKU-1032,163.43
+P033,Resistance Bands ,Sports & Outdoors,Apex,SKU-1033,207.27
+P034,Power Bank,Electronics,Vertex,SKU-1034,207.69
+P035,Monitor Arm,Home & Office,Peak,SKU-1035,232.88
+P036,Coffee-Maker,HOME & KITCHEN,Zenith,SKU-1036,42.34
+P037,Ceramic Pan,Home & Kitchen,Pulse,SKU-1037,55.86
+P038,Sleeping Bag,Sports & Outdoors,Apex,SKU-1038,286.6
+P039,Blender 500W,Home & Kitchen,Peak,SKU-1039,291.84
+P040,Ceramic Mug,Home & Kitchen,Nova,SKU-1040,157.22
+P041,Slim Jeans,Apparel,Vertex,SKU-1041,262.44
+P042,Ergonomic Chair,Home & Office,Peak,SKU-1042,
+P043,Ankle Socks 3pk,Apparel,Aura,SKU-1043,54.31
+P044,tee,Apparel ,Nova,SKU-1044,166.41
+P045,Mechanical Keyboard,Electronics,Apex,SKU-1045,183.68
+P046,Stainless Water Bottle,Sports & Outdoors,Core,SKU-1013,15.64
+P047,running shoes,footwear,Zenith,SKU-1047,264.82
+P048,Air Fryer,Home & Kitchen,Peak,SKU-1048,79.43
+P049,Gel Pens 10pk,Home & Office,Aura,SKU-1049,264.61
+P050,Hiking Backpack,Sports & Outdoors,Vertex,SKU-1050,34.83
+P051,Run Shoes,Footwear ,Core,SKU-1051,246.64
+P052,Sunglasses Polarized,Apparel,Nova,SKU-1052,47.22
+P053,wireless headphones,electronics ,Core,SKU-1053,284.58
+P054,Leather Belt,Apparel,Nova,SKU-1054,86.86
+P055,Winter Jacket,Apparel,Pulse,SKU-1055,289.66
+P056,Wool Scarf,Apparel,Aura,SKU-1056,
+P057,Standing Desk Mat,Home & Office,Pulse,SKU-1057,298.58
+P058,T Shirt,apparel,Zenith,SKU-1058,137.04
+P059,Wireless Headphones,Electronics,Core,SKU-1059,45.08
+P060,Foam Roller,Sports & Outdoors,Aura,SKU-1060,28.56

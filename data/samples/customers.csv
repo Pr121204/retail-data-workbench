@@ -1,0 +1,81 @@
+customer_id,name,email,region,signup_date
+C001,Mary Anderson,mary.anderson@yahoo.com,North,26-May-2021
+C002,Patricia Anderson,patricia.anderson@gmail.com,North,2022-11-08
+C003,Steven Thomas,steven.thomas@outlook.com, North,15-Mar-2022
+C004,William Walker,william.walker@yahoo.com, North,2023-04-14
+C005,Michael Miller,michael.miller@example.com,WEST,05/18/2023
+C006,Sandra Brown,sandra.brown@gmail.com,North,05-Apr-2023
+C007,Nancy Miller,nancy.miller@yahoo.com,West,25-Jan-2022
+C008,Mark Rodriguez,jennifer.brown.example.com,East,07/25/2022
+C009,Jessica Jones,jessica.jones@example.com,south,2021-07-20
+C010,Paul Smith,paul.smith@gmail.com,West,12/07/2021
+C011,Ashley Walker,ashley.walker@yahoo.com, West,2021-05-01
+C012,Matthew Smith,matthew.smith@example.com,west,07/21/2023
+C013,Margaret Young,margaret.young@yahoo.com,West,2022-08-31
+C014,Patricia Brown,patricia.brown@outlook.com,North,13-Apr-2021
+C015,Donald Hernandez,donald.hernandez@gmail.com,south,2021-06-14
+C016,Robert Jones,robert.jones@yahoo.com, West,03-Sep-2021
+C017,Jessica Williams,jessica.williams@gmail.com, West,10-Apr-2024
+C018,Kimberly Lee,kimberly.lee@outlook.com,West,2022-10-06
+C019,Thomas Sanchez,thomas.sanchez@yahoo.com,west,07/26/2023
+C020,Robert Smith,robert.smith@example.com,EAST,2024-02-28
+C021,Robert Wilson,robert.wilson@outlook.com,East,2022-12-16
+C022,Jessica White,jessica.white@outlook.com,East,17-Jun-2023
+C023,Karen Smith,MICHAEL_DAVIS!GMAIL.COM,South,10/03/2021
+C024,Linda Miller,linda.miller@yahoo.com,west,01-Aug-2022
+C025,Susan Perez,susan.perez@yahoo.com,west,11/02/2023
+C026,Thomas Brown,thomas.brown@gmail.com, West,2022-07-21
+C027,James Perez,james.perez@yahoo.com,west,27-Nov-2021
+C028,Mark Ramirez,mark.ramirez@gmail.com,South,04-Jun-2021
+C029,Elizabeth Williams,elizabeth.williams@outlook.com,EAST,2024-02-06
+C030,Margaret Rodriguez,margaret.rodriguez@gmail.com,west,2023-01-17
+C031,Daniel Wilson,daniel.wilson@yahoo.com,South,26-Dec-2022
+C032,Anthony Martinez,anthony.martinez@yahoo.com,East,12/29/2021
+C033,Mary Lopez,mary.lopez@outlook.com, West,05/24/2022
+C034,David Miller,david.miller@example.com,North,2023-08-22
+C035,Richard Robinson,richard.robinson@outlook.com,west,2022-04-12
+C036,Mary Gonzalez,mary.gonzalez@example.com,WEST,2022-07-25
+C037,Sarah Thompson,sarah.thompson@example.com,south,2022-11-10
+C038,Linda Taylor,linda.taylor@yahoo.com,EAST,2022-06-28
+C039,Michael Ramirez,michael.ramirez@outlook.com,WEST,13-Jun-2023
+C040,Steven Davis,robert.miller@@yahoo..com,EAST,01/25/2022
+C041,John Ramirez,john.ramirez@gmail.com,south,08-Jan-2024
+C042,Richard White,richard.white@example.com,South,08-Nov-2022
+C043,Christopher Davis,christopher.davis@outlook.com,south,26-Sep-2022
+C044,Anthony Lee,anthony.lee@example.com,west,2024-02-10
+C045,Richard Clark,richard.clark@example.com,East,14-Jun-2024
+C046,Karen Sanchez,karen.sanchez@gmail.com,west,2022-08-11
+C047,Margaret Lee,margaret.lee@example.com, North,25-Jun-2023
+C048,Susan Walker,susan.walker@yahoo.com,South,05-Aug-2022
+C049,Michelle Perez,michelle.perez@gmail.com,West,2022-09-28
+C050,Richard Martinez,richard.martinez@gmail.com,North,05/17/2022
+C051,Michelle Jones,michelle.jones@example.com, West,2024-03-24
+C052,Matthew Young,matthew.young@example.com,West,30-Oct-2021
+C053,James Miller,james.miller@example.com,West,27-Dec-2021
+C054,Kimberly Robinson,kimberly.robinson@gmail.com,south,2022-05-26
+C055,Sandra Rodriguez,sandra.rodriguez@example.com,south,19-Feb-2024
+C056,Christopher Lewis,christopher.lewis@example.com,south,2023-07-03
+C057,Donald Lewis,donald.lewis@outlook.com,West,22-Jul-2022
+C058,Ashley Thomas,ashley.thomas@outlook.com, North,08-Jun-2021
+C059,Charles Thomas,charles.thomas@outlook.com,WEST,17-Oct-2022
+C060,Jennifer Rodriguez,jennifer.rodriguez@yahoo.com,West,24-Feb-2023
+C061,Elizabeth Wilson,elizabeth.wilson@gmail.com, West,04/15/2023
+C062,Paul Robinson,paul.robinson@example.com,North,02/28/2022
+C063,Matthew Johnson,matthew.johnson@example.com, North,01/13/2021
+C064,Karen Harris,karen.harris@example.com,south,24-Jan-2024
+C065,Joseph Young,joseph.young@yahoo.com,west,06/12/2023
+C066,Mary Harris,mary.harris@outlook.com, West,12/05/2021
+C067,William Johnson,william.johnson@example.com,EAST,01-Mar-2024
+C068,Mary Garcia,mary.garcia@example.com,East,2023-08-04
+C069,Patricia Taylor,patricia.taylor@example.com,WEST,03/10/2022
+C070,Christopher Perez,christopher.perez@example.com,west,05/14/2023
+C071,Jennifer Walker,jennifer.walker@gmail.com,south,04/17/2021
+C072,Joseph Jones,joseph.jones@gmail.com,North,2022-05-22
+C073,Mary Martinez,mary.martinez@yahoo.com,East,28-Aug-2023
+C074,Linda Wilson,linda.wilson@example.com,west,2023-01-26
+C075,Joshua Davis,joshua.davis@yahoo.com,west,10-Aug-2021
+C076,Mary Martin,mary.martin@example.com, West,2022-02-11
+C006,Sandra Brown,sandra.brown@gmail.com,North,05-Apr-2023
+C016,Robert Jones,robert.jones@yahoo.com, West,03-Sep-2021
+C031,Daniel Wilson,daniel.wilson@yahoo.com,South,26-Dec-2022
+C051,Michelle Jones,michelle.jones@example.com, West,2024-03-24
