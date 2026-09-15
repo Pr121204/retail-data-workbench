@@ -59,3 +59,55 @@ def test_upload_sample_datasets():
 
         get_dataset_names = {d["name"] for d in get_data["datasets"]}
         assert get_dataset_names == {"products", "customers", "stores", "orders", "inventory"}
+
+
+def test_upload_rejects_non_csv_and_duplicate_dataset_names():
+    with TestClient(app) as client:
+        non_csv = client.post(
+            "/runs/upload",
+            files=[("files", ("data.txt", b"not csv", "text/plain"))],
+        )
+        assert non_csv.status_code == 415
+
+        duplicate = client.post(
+            "/runs/upload",
+            files=[
+                ("files", ("orders.csv", b"id\n1\n", "text/csv")),
+                ("files", ("orders.csv", b"id\n2\n", "text/csv")),
+            ],
+        )
+        assert duplicate.status_code == 400
+        assert "Duplicate" in duplicate.json()["detail"]
+
+
+def test_upload_rejects_unreadable_csv_before_creating_run():
+    with TestClient(app) as client:
+        response = client.post(
+            "/runs/upload",
+            files=[("files", ("broken.csv", b"id,name\n1,\"unterminated\n", "text/csv"))],
+        )
+
+    assert response.status_code == 422
+    assert "not a readable CSV" in response.json()["detail"]
+
+
+def test_upload_enforces_file_count_and_byte_limits(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MAX_UPLOAD_FILES", 1)
+    monkeypatch.setattr(settings, "MAX_UPLOAD_BYTES", 4)
+    with TestClient(app) as client:
+        too_many = client.post(
+            "/runs/upload",
+            files=[
+                ("files", ("one.csv", b"id\n1\n", "text/csv")),
+                ("files", ("two.csv", b"id\n2\n", "text/csv")),
+            ],
+        )
+        too_large = client.post(
+            "/runs/upload",
+            files=[("files", ("large.csv", b"id\n1\n", "text/csv"))],
+        )
+
+    assert too_many.status_code == 413
+    assert too_large.status_code == 413

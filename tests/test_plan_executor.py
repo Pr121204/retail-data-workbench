@@ -104,6 +104,22 @@ class TestExecutePlanAggregate:
         assert "total_revenue" in rows[0]
         assert "order_count" in rows[0]
 
+    def test_grouped_count_star_counts_rows_and_preserves_null_groups(self, clean_datasets):
+        clean_datasets["orders"] = clean_datasets["orders"].copy()
+        clean_datasets["orders"].loc[0, "region"] = None
+        plan = make_plan(
+            intent="aggregate",
+            group_by=["region"],
+            metrics=[Metric(**{"agg": "count", "field": "*", "as": "order_count"})],
+        )
+
+        result = execute_plan(plan, clean_datasets)
+
+        assert result.get("execution_error") is None
+        counts = {row["region"]: row["order_count"] for row in result["result_rows"]}
+        assert counts[None] == 1
+        assert counts["South"] == 2
+
     def test_scalar_metrics_no_group_by(self, clean_datasets):
         plan = make_plan(
             intent="aggregate",
@@ -186,16 +202,16 @@ class TestExecutePlanFilter:
         assert result.get("execution_error") is None
         assert result["result_row_count"] == 1
 
-    def test_filter_on_missing_field_adds_warning_not_crash(self, clean_datasets):
+    def test_filter_on_missing_field_returns_structured_execution_error(self, clean_datasets):
         plan = make_plan(
             intent="filter",
             filters=[Filter(field="nonexistent_col", op="eq", value="X")],
         )
         result = execute_plan(plan, clean_datasets)
 
-        assert result.get("execution_error") is None
-        assert len(result["evidence"]["filters_warnings"]) == 1
-        assert "nonexistent_col" in result["evidence"]["filters_warnings"][0]["warning"]
+        assert result.get("execution_error") is not None
+        assert result["result_rows"] == []
+        assert "nonexistent_col" in result["execution_error"]
 
     def test_multiple_filters_are_cumulative(self, clean_datasets):
         plan = make_plan(
@@ -229,6 +245,7 @@ class TestExecutePlanJoin:
 
         assert result.get("execution_error") is None
         assert result["evidence"]["join_report"] is not None
+        assert "product_id" in result["evidence"]["columns_used"]
         rows = result["result_rows"]
         categories = {r["category"]: r["total_revenue"] for r in rows}
         assert categories["Electronics"] == 550.0
@@ -322,6 +339,31 @@ class TestExecutePlanEvidence:
         assert isinstance(ev["row_count_after_filter"], int)
         assert ev["row_count_before_filter"] == 5
         assert ev["row_count_after_filter"] == 2
+
+    def test_evidence_contains_lineage_operations_and_bounded_preview(self, clean_datasets):
+        plan = make_plan(
+            intent="aggregate",
+            group_by=["region"],
+            metrics=[Metric(**{"agg": "count", "field": "*", "as": "orders"})],
+        )
+        result = execute_plan(
+            plan,
+            clean_datasets,
+            evidence_context={
+                "run_id": "run-123",
+                "dataset_stage": "clean",
+                "dataset_version": "run-123:clean",
+            },
+        )
+
+        evidence = result["evidence"]
+        assert evidence["run_id"] == "run-123"
+        assert evidence["dataset_stage"] == "clean"
+        assert evidence["dataset_version"] == "run-123:clean"
+        assert evidence["columns_used"] == ["region"]
+        assert "group_by" in evidence["operations"]
+        assert "count" in evidence["operations"]
+        assert len(evidence["result_preview"]) <= 20
 
 
 class TestExecutePlanMissingDataset:

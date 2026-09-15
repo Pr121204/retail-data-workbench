@@ -40,7 +40,11 @@ from pathlib import Path
 import pandas as pd
 
 from app.services.chat_intent import classify_question, match_analytics_capability
-from app.services.chat_session import apply_active_filters_to_plan
+from app.services.chat_session import (
+    apply_active_filters_to_plan,
+    extract_filters_from_question,
+    merge_active_filters,
+)
 from app.services.cleaning import (
     apply_cleaning_plan,
     build_cleaning_plan,
@@ -52,7 +56,18 @@ from app.services.plan_executor import execute_plan
 from app.services.plan_validator import PlanValidationError, validate_plan
 from app.services.profiling import profile_dataframe
 
-SUPPORTED_EXPECTATIONS = {"min_result_rows", "expected_status"}
+SUPPORTED_EXPECTATIONS = {
+    "min_result_rows",
+    "expected_status",
+    "result_row_count",
+    "plan_intent",
+    "plan_dataset",
+    "answer_contains",
+    "evidence_keys",
+    "evidence_equals",
+    "expected_filters",
+    "expected_join",
+}
 SUPPORTED_CASE_TYPES = {"cleaning", "chat", "join"}
 
 
@@ -148,7 +163,13 @@ def run_chat_turn_evaluation(
                 },
                 "plan_source": "analytics_capability",
                 "answer": answer_text,
-                "evidence": result,
+                "evidence": {
+                    **result,
+                    "lineage": {
+                        "dataset_stage": "clean",
+                        "dataset_version": "clean:evaluator",
+                    },
+                },
                 "result_row_count": len(result.get("metrics", {})),
             }
         )
@@ -166,6 +187,9 @@ def run_chat_turn_evaluation(
 
     plan, plan_source = generate_plan(question=question, available_datasets=dataset_names)
     plan = apply_active_filters_to_plan(plan, active_filters)
+    for extracted_filter in extract_filters_from_question(question):
+        if extracted_filter.field not in {item.field for item in plan.filters}:
+            plan.filters.append(extracted_filter)
 
     try:
         validated_plan = validate_plan(plan)
@@ -180,7 +204,11 @@ def run_chat_turn_evaluation(
         )
         return turn
 
-    execution_result = execute_plan(validated_plan, clean_datasets)
+    execution_result = execute_plan(
+        validated_plan,
+        clean_datasets,
+        evidence_context={"dataset_version": "clean:evaluator"},
+    )
     turn.update(
         {
             "status": "llm_fallback" if plan_source == "mock_fallback" else "ok",
@@ -192,6 +220,45 @@ def run_chat_turn_evaluation(
         }
     )
     return turn
+
+
+def _assert_chat_expectations(turn: dict, expected: dict) -> None:
+    """Fail a case when a declared chat contract is not actually met."""
+    if "expected_status" in expected and turn["status"] != expected["expected_status"]:
+        raise AssertionError(
+            f"expected_status={expected['expected_status']} but turn status was '{turn['status']}'"
+        )
+    if "min_result_rows" in expected and turn.get("result_row_count", 0) < expected["min_result_rows"]:
+        raise AssertionError(
+            f"min_result_rows={expected['min_result_rows']} but only {turn.get('result_row_count', 0)} row(s) returned"
+        )
+    if "result_row_count" in expected and turn.get("result_row_count") != expected["result_row_count"]:
+        raise AssertionError(
+            f"result_row_count={expected['result_row_count']} but observed {turn.get('result_row_count')}"
+        )
+    plan = turn.get("plan") or {}
+    if "plan_intent" in expected and plan.get("intent") != expected["plan_intent"]:
+        raise AssertionError(f"expected plan intent {expected['plan_intent']!r}, got {plan.get('intent')!r}")
+    if "plan_dataset" in expected and plan.get("dataset") != expected["plan_dataset"]:
+        raise AssertionError(f"expected plan dataset {expected['plan_dataset']!r}, got {plan.get('dataset')!r}")
+    answer = turn.get("answer", "")
+    for fragment in expected.get("answer_contains", []):
+        if fragment.lower() not in answer.lower():
+            raise AssertionError(f"answer did not contain expected text {fragment!r}")
+    evidence = turn.get("evidence") or {}
+    missing_keys = [key for key in expected.get("evidence_keys", []) if key not in evidence]
+    if missing_keys:
+        raise AssertionError(f"evidence missing required keys: {missing_keys}")
+    for key, value in expected.get("evidence_equals", {}).items():
+        if evidence.get(key) != value:
+            raise AssertionError(f"evidence[{key!r}] expected {value!r}, got {evidence.get(key)!r}")
+    if "expected_filters" in expected:
+        observed_filters = evidence.get("filters_applied", [])
+        for expected_filter in expected["expected_filters"]:
+            if expected_filter not in observed_filters:
+                raise AssertionError(f"expected filter {expected_filter!r} was not applied")
+    if "expected_join" in expected and (turn.get("plan") or {}).get("join") != expected["expected_join"]:
+        raise AssertionError("chat plan join did not match the expected join")
 
 
 # ---------------------------------------------------------------------------
@@ -253,33 +320,31 @@ def run_case(case: dict, artifacts_dir: Path) -> dict:
     record["artifacts"]["cleaned_files"] = pipeline["cleaned_files"]
 
     if case_type == "chat":
-        question = case.get("question")
-        if not question:
-            raise ValueError("Chat case requires a 'question' field")
-
-        turn = run_chat_turn_evaluation(
-            question=question,
-            clean_datasets=pipeline["datasets"],
-        )
-        record["chat_evaluation"] = [turn]
-
         expected = case.get("expected") or {}
         unsupported = sorted(set(expected.keys()) - SUPPORTED_EXPECTATIONS)
         if unsupported:
-            record["unsupported_expectations"] = {
-                key: "NOT_YET_SUPPORTED" for key in unsupported
-            }
+            raise ValueError(f"Unsupported chat expectations: {unsupported}")
 
-        if "expected_status" in expected and turn["status"] != expected["expected_status"]:
-            raise AssertionError(
-                f"expected_status={expected['expected_status']} but turn status was '{turn['status']}'"
+        questions = case.get("questions") or ([case["question"]] if case.get("question") else [])
+        if not questions or any(not isinstance(question, str) or not question.strip() for question in questions):
+            raise ValueError("Chat case requires a non-empty 'question' or 'questions' field")
+        active_filters = {}
+        turns = []
+        for turn_question in questions:
+            turn = run_chat_turn_evaluation(
+                question=turn_question,
+                clean_datasets=pipeline["datasets"],
+                active_filters=active_filters,
             )
-        if "min_result_rows" in expected:
-            observed = turn.get("result_row_count", 0)
-            if observed < expected["min_result_rows"]:
-                raise AssertionError(
-                    f"min_result_rows={expected['min_result_rows']} but only {observed} row(s) returned"
-                )
+            turns.append(turn)
+            for extracted_filter in extract_filters_from_question(turn_question):
+                active_filters = merge_active_filters(active_filters, [extracted_filter])
+        record["chat_evaluation"] = turns
+        _assert_chat_expectations(turns[-1], expected)
+        if "expected_statuses" in case:
+            observed_statuses = [turn["status"] for turn in turns]
+            if observed_statuses != case["expected_statuses"]:
+                raise AssertionError(f"expected_statuses={case['expected_statuses']} but got {observed_statuses}")
 
     elif case_type == "join":
         left, right = case.get("left"), case.get("right")

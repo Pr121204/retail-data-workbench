@@ -112,6 +112,61 @@ def _mock_plan(question: str, available_datasets: list[str]) -> QueryPlan:
             limit=10,
         )
 
+    # Bottom products by revenue
+    if ("bottom" in q or "worst" in q or "lowest" in q) and "product" in q and "revenue" in q:
+        return QueryPlan(
+            intent="top_n",
+            dataset="orders",
+            join={"with": "products"},
+            filters=[],
+            group_by=["product_name"],
+            metrics=[
+                Metric(**{"agg": "sum", "field": "revenue", "as": "total_revenue"}),
+                Metric(**{"agg": "count", "field": "*", "as": "order_count"}),
+            ],
+            sort=[Sort(field="total_revenue", dir="asc")],
+            limit=10,
+        )
+
+    # Distinct values are useful for exploratory questions and do not require
+    # an LLM or unrestricted expression evaluation.
+    if "distinct" in q or "unique" in q:
+        for field, dataset in (
+            ("category", "products"),
+            ("brand", "products"),
+            ("region", "orders"),
+            ("city", "stores"),
+        ):
+            if field in q and dataset in available_datasets:
+                return QueryPlan(
+                    intent="aggregate",
+                    dataset=dataset,
+                    filters=[],
+                    group_by=[field],
+                    metrics=[Metric(**{"agg": "count", "field": "*", "as": "count"})],
+                    sort=[Sort(field=field, dir="asc")],
+                    limit=200,
+                )
+
+    # Descriptive statistics over a numeric retail measure.
+    if "statistic" in q or "statistics" in q or "describe" in q:
+        field = "revenue" if "revenue" in q or "sales" in q else "quantity"
+        if "orders" in available_datasets:
+            return QueryPlan(
+                intent="describe",
+                dataset="orders",
+                filters=[],
+                group_by=[],
+                metrics=[
+                    Metric(**{"agg": "count", "field": field, "as": "count"}),
+                    Metric(**{"agg": "avg", "field": field, "as": "average"}),
+                    Metric(**{"agg": "min", "field": field, "as": "minimum"}),
+                    Metric(**{"agg": "max", "field": field, "as": "maximum"}),
+                ],
+                sort=[],
+                limit=1,
+            )
+
     # Store performance
     if "store" in q and ("revenue" in q or "performance" in q or "sales" in q):
         return QueryPlan(
@@ -190,7 +245,7 @@ def _mock_plan(question: str, available_datasets: list[str]) -> QueryPlan:
         )
 
     # Fallback: describe orders
-    primary_dataset = "orders"
+    primary_dataset = "orders" if "orders" in available_datasets else (available_datasets[0] if available_datasets else "orders")
     for ds in ["products", "customers", "stores", "inventory"]:
         if ds in q and ds in available_datasets:
             primary_dataset = ds

@@ -1,3 +1,4 @@
+import io
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.config import settings
 from app.models.run import Dataset, Run
 from app.services.analytics import compute_all_analytics
 from app.services.cleaning import apply_cleaning_plan, build_cleaning_plan, validate_cleaning
@@ -38,6 +40,56 @@ async def upload_runs(
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
 ):
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one CSV file is required",
+        )
+    if len(files) > settings.MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"At most {settings.MAX_UPLOAD_FILES} files may be uploaded per run",
+        )
+
+    prepared_files = []
+    dataset_names = set()
+    total_bytes = 0
+    for file in files:
+        filename = Path(file.filename or "").name
+        if not filename or Path(filename).suffix.lower() != ".csv":
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"File '{file.filename or '(unnamed)'}' must have a .csv extension",
+            )
+        dataset_name = Path(filename).stem
+        if not dataset_name or dataset_name in dataset_names:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Duplicate or empty dataset name for file '{filename}'",
+            )
+        dataset_names.add(dataset_name)
+
+        content = await file.read(settings.MAX_UPLOAD_BYTES + 1)
+        if len(content) > settings.MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File '{filename}' exceeds the {settings.MAX_UPLOAD_BYTES} byte upload limit",
+            )
+        total_bytes += len(content)
+        if total_bytes > settings.MAX_UPLOAD_BYTES * settings.MAX_UPLOAD_FILES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Total uploaded content exceeds the configured limit",
+            )
+        try:
+            pd.read_csv(io.BytesIO(content))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"File '{filename}' is not a readable CSV: {exc}",
+            )
+        prepared_files.append((filename, dataset_name, content))
+
     run = Run(status="pending")
     db.add(run)
     db.flush()  # populate run.id
@@ -47,13 +99,10 @@ async def upload_runs(
 
     dataset_summaries = []
 
-    for file in files:
-        filename = Path(file.filename).name
-        dataset_name = Path(filename).stem
+    for filename, dataset_name, content in prepared_files:
         file_path = raw_dir / filename
 
         # Write uploaded file content to disk
-        content = await file.read()
         with open(file_path, "wb") as f:
             f.write(content)
 
@@ -251,6 +300,11 @@ def join_datasets(run_id: str, request: JoinRequest, db: Session = Depends(get_d
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Run status must be 'cleaned' or later to perform joins, but is '{run.status}'",
         )
+    if request.how not in {"left", "inner"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Join mode must be 'left' or 'inner'",
+        )
 
     # Validate join configuration via safety registry
     try:
@@ -282,13 +336,16 @@ def join_datasets(run_id: str, request: JoinRequest, db: Session = Depends(get_d
             detail=f"Failed to read dataset file(s): {e}",
         )
 
-    joined_df, report = safe_join(
-        left_df=left_df,
-        right_df=right_df,
-        left_key=join_cfg["left_key"],
-        right_key=join_cfg["right_key"],
-        how=request.how,
-    )
+    try:
+        joined_df, report = safe_join(
+            left_df=left_df,
+            right_df=right_df,
+            left_key=join_cfg["left_key"],
+            right_key=join_cfg["right_key"],
+            how=request.how,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     # Preview: first 20 rows, JSON-safe (NaN converted to null/None)
     preview_df = joined_df.head(20).copy()
@@ -408,7 +465,15 @@ def query_run(
         )
 
     # Step 3: Execute the validated plan
-    execution_result = execute_plan(validated_plan, clean_datasets)
+    execution_result = execute_plan(
+        validated_plan,
+        clean_datasets,
+        evidence_context={
+            "run_id": run.id,
+            "dataset_stage": "clean",
+            "dataset_version": f"run:{run.id}:clean",
+        },
+    )
 
     return {
         "question": request.question,

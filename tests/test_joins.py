@@ -52,6 +52,16 @@ def test_get_join_config_invalid_unit():
     assert "not permitted by JOIN_REGISTRY" in str(exc_info.value)
 
 
+def test_safe_join_rejects_invalid_mode_and_missing_keys():
+    frame = pd.DataFrame({"id": [1]})
+
+    with pytest.raises(ValueError, match="Unsupported join mode"):
+        safe_join(frame, frame, "id", "id", how="cross")
+
+    with pytest.raises(ValueError, match="Right join key"):
+        safe_join(frame, frame, "id", "missing")
+
+
 def test_join_integration_valid_and_invalid():
     csv_files = ["products.csv", "customers.csv", "stores.csv", "orders.csv", "inventory.csv"]
 

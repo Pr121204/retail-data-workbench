@@ -3,6 +3,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from app.evaluate import run_case
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -79,3 +83,44 @@ def test_evaluator_batch_survives_broken_case(tmp_path):
     rev_turn = revenue["chat_evaluation"][0]
     assert rev_turn["status"] == "ok"
     assert rev_turn["result_row_count"] >= 1
+
+
+def test_evaluator_rejects_unsupported_expectations(tmp_path):
+    case = {
+        "id": "unsupported",
+        "type": "chat",
+        "datasets": ["data/samples/orders.csv"],
+        "question": "What is the average order value?",
+        "expected": {"unknown_contract": True},
+    }
+
+    with pytest.raises(ValueError, match="Unsupported chat expectations"):
+        run_case(case, tmp_path / "artifacts")
+
+
+def test_evaluator_enforces_multiturn_filters_and_evidence(tmp_path):
+    case = {
+        "id": "multiturn-contract",
+        "type": "chat",
+        "datasets": [
+            "data/samples/orders.csv",
+            "data/samples/products.csv",
+        ],
+        "questions": [
+            "Show me orders in the West region",
+            "Which categories had the highest return rate among those?",
+        ],
+        "expected_statuses": ["ok", "ok"],
+        "expected": {
+            "expected_status": "ok",
+            "answer_contains": ["highest return rate"],
+            "evidence_keys": ["metrics", "assumption", "lineage"],
+            "evidence_equals": {"lineage": {"dataset_stage": "clean", "dataset_version": "clean:evaluator"}},
+        },
+    }
+
+    record = run_case(case, tmp_path / "artifacts")
+
+    assert record["status"] == "ok"
+    assert len(record["chat_evaluation"]) == 2
+    assert record["chat_evaluation"][1]["plan"]["region_filter_applied"] is True

@@ -3,7 +3,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.cleaning import apply_cleaning_plan, build_cleaning_plan
+from app.services.cleaning import apply_cleaning_plan, build_cleaning_plan, validate_cleaning
 
 SAMPLE_DIR = Path(__file__).resolve().parent.parent / "data" / "samples"
 
@@ -39,6 +39,24 @@ def test_cleaning_unit():
     # The row with 'unparseable_string' is kept with NaN in price
     assert len(df_clean) == 3
     assert pd.isna(df_clean.loc[1, "price"])
+
+
+def test_cleaning_is_idempotent_and_duplicate_id_steps_are_unique():
+    df = pd.DataFrame(
+        [
+            {"product_id": "P1", "customer_id": "C1", "price": "10"},
+            {"product_id": "P1", "customer_id": "C1", "price": "10"},
+        ]
+    )
+    first_plan = build_cleaning_plan(df, "products")
+    first_clean, first_executed = apply_cleaning_plan(df, first_plan)
+    second_plan = build_cleaning_plan(first_clean, "products")
+    second_clean, second_executed = apply_cleaning_plan(first_clean, second_plan)
+
+    step_ids = [step.step_id for step in first_executed]
+    assert len(step_ids) == len(set(step_ids))
+    assert first_clean.equals(second_clean)
+    assert validate_cleaning(first_clean, second_clean, second_executed)["row_count_before"] == 1
 
 
 def test_cleaning_integration():

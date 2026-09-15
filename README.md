@@ -77,6 +77,11 @@ cp .env.example .env                            # defaults: USE_MOCK_LLM=True
 .venv/Scripts/python -m uvicorn app.main:app --reload
 ```
 
+Uploads are bounded by `MAX_UPLOAD_FILES` and `MAX_UPLOAD_BYTES` (configured
+through environment variables, with conservative defaults). Only `.csv`
+files are accepted, and duplicate dataset names are rejected before a run is
+created.
+
 Delete `retail.db` whenever the schema changed before starting the server —
 `Base.metadata.create_all` only adds missing tables, it does not migrate.
 
@@ -111,6 +116,12 @@ Runs cleaning/chat/join cases headlessly through the same service functions
 as the API. One failed case never aborts the batch (`status: "error"` +
 traceback artifact); results include per-case profiles, cleaning plans, chat
 turns with evidence, and join reports.
+
+Chat cases can assert `expected_status`, `min_result_rows`,
+`result_row_count`, `plan_intent`, `plan_dataset`, `answer_contains`,
+`evidence_keys`, `evidence_equals`, `expected_filters`, and `expected_join`.
+Multi-turn cases use a `questions` list and can assert `expected_statuses`.
+Unsupported expectation keys fail the case instead of being silently ignored.
 
 A case marked `"intentional_failure": true` (e.g. `case_006_broken`, the
 deliberate failure-isolation demo) is called out in the CLI output, so the

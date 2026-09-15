@@ -21,7 +21,11 @@ def to_json_safe(val: Any) -> Any:
     return str(val)
 
 
-def execute_plan(plan: QueryPlan, clean_datasets: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
+def execute_plan(
+    plan: QueryPlan,
+    clean_datasets: Dict[str, pd.DataFrame],
+    evidence_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Executes an already-validated QueryPlan against loaded clean DataFrames.
     Top-level exception handler ensures it never raises an unhandled error.
@@ -108,6 +112,12 @@ def execute_plan(plan: QueryPlan, clean_datasets: Dict[str, pd.DataFrame]) -> Di
                     }
                 )
 
+        if filters_warnings:
+            raise ValueError(
+                "One or more filters could not be applied: "
+                + "; ".join(item["warning"] for item in filters_warnings)
+            )
+
         row_count_after_filter = int(len(base_df))
 
         # d) Aggregation / Metrics / Group By
@@ -121,13 +131,21 @@ def execute_plan(plan: QueryPlan, clean_datasets: Dict[str, pd.DataFrame]) -> Di
         }
 
         if plan.group_by and plan.metrics:
-            agg_kwargs = {}
-            for m in plan.metrics:
-                func = agg_map.get(m.agg, m.agg)
-                target_col = plan.group_by[0] if m.field == "*" else m.field
-                agg_kwargs[m.as_] = pd.NamedAgg(column=target_col, aggfunc=func)
-
-            result_df = base_df.groupby(plan.group_by, as_index=False).agg(**agg_kwargs)
+            grouped = base_df.groupby(plan.group_by, dropna=False, sort=False)
+            result_df = None
+            for metric in plan.metrics:
+                if metric.agg == "count" and metric.field == "*":
+                    metric_df = grouped.size().reset_index(name=metric.as_)
+                else:
+                    metric_df = (
+                        grouped[metric.field]
+                        .agg(agg_map.get(metric.agg, metric.agg))
+                        .reset_index(name=metric.as_)
+                    )
+                if result_df is None:
+                    result_df = metric_df
+                else:
+                    result_df = result_df.merge(metric_df, on=plan.group_by, how="outer")
 
         elif plan.metrics and not plan.group_by:
             row: Dict[str, Any] = {}
@@ -178,20 +196,53 @@ def execute_plan(plan: QueryPlan, clean_datasets: Dict[str, pd.DataFrame]) -> Di
             for r in limited_df.to_dict(orient="records")
         ]
 
+        result_preview = [
+            {col: to_json_safe(val) for col, val in r.items()}
+            for r in limited_df.head(20).to_dict(orient="records")
+        ]
+        context = dict(evidence_context or {})
+        columns_used = sorted(
+            set(plan.group_by)
+            | {metric.field for metric in plan.metrics if metric.field != "*"}
+            | {filter_.field for filter_ in plan.filters}
+            | {sort_.field for sort_ in plan.sort}
+        )
+        if join_report:
+            columns_used = sorted(
+                set(columns_used)
+                | {join_report["left_key"], join_report["right_key"]}
+            )
+        operations = []
+        if plan.filters:
+            operations.append("filter")
+        if plan.group_by:
+            operations.append("group_by")
+        operations.extend(metric.agg for metric in plan.metrics)
+        if plan.sort:
+            operations.append("sort")
+        if plan.limit:
+            operations.append("limit")
+
         return {
             "result_rows": result_rows,
             "result_row_count": result_row_count,
             "evidence": {
+                "run_id": context.get("run_id"),
+                "dataset_stage": context.get("dataset_stage", "clean"),
+                "dataset_version": context.get("dataset_version", "clean"),
                 "dataset": plan.dataset,
+                "columns_used": columns_used,
                 "join": plan.join,
                 "join_report": join_report,
                 "filters_applied": filters_applied,
                 "filters_warnings": filters_warnings,
                 "group_by": plan.group_by,
                 "metrics": [m.model_dump(by_alias=True) for m in plan.metrics],
+                "operations": operations,
                 "row_count_before_filter": row_count_before_filter,
                 "row_count_after_filter": row_count_after_filter,
                 "limit_applied": plan.limit,
+                "result_preview": result_preview,
             },
         }
 
@@ -200,16 +251,22 @@ def execute_plan(plan: QueryPlan, clean_datasets: Dict[str, pd.DataFrame]) -> Di
             "result_rows": [],
             "result_row_count": 0,
             "evidence": {
+                "run_id": (evidence_context or {}).get("run_id"),
+                "dataset_stage": (evidence_context or {}).get("dataset_stage", "clean"),
+                "dataset_version": (evidence_context or {}).get("dataset_version", "clean"),
                 "dataset": getattr(plan, "dataset", None),
+                "columns_used": [],
                 "join": getattr(plan, "join", None),
                 "join_report": None,
                 "filters_applied": [],
                 "filters_warnings": [],
                 "group_by": getattr(plan, "group_by", []),
                 "metrics": [m.model_dump(by_alias=True) for m in getattr(plan, "metrics", [])],
+                "operations": [],
                 "row_count_before_filter": 0,
                 "row_count_after_filter": 0,
                 "limit_applied": getattr(plan, "limit", 20),
+                "result_preview": [],
             },
             "execution_error": str(e),
         }

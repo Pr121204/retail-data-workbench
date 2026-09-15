@@ -12,6 +12,7 @@ import pytest
 
 from app.services.llm_planner import _mock_plan, generate_plan
 from app.services.plan_schema import QueryPlan
+from app.services.plan_validator import validate_plan
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,16 @@ def test_mock_plan_always_returns_valid_queryplan():
     plan = _mock_plan("zzzzz", [])
     assert isinstance(plan, QueryPlan)
     assert plan.intent in {"filter", "aggregate", "compare", "top_n", "describe"}
+
+
+@pytest.mark.parametrize("question", [
+    "Show the bottom products by revenue",
+    "List distinct product categories",
+    "Give me descriptive statistics for revenue",
+])
+def test_new_mock_plans_pass_validator(question):
+    plan = _mock_plan(question, ["orders", "products", "customers", "stores", "inventory"])
+    assert validate_plan(plan) == plan
 
 
 # ---------------------------------------------------------------------------

@@ -126,7 +126,7 @@ def build_cleaning_plan(df: pd.DataFrame, dataset_name: str) -> List[CleaningSte
                 if is_primary_id or cardinality_ratio >= 0.8:
                     steps.append(
                         CleaningStep(
-                            step_id="dedupe_duplicate_ids",
+                            step_id=f"dedupe_duplicate_ids_{col}",
                             reason=f"Flag {dups} duplicate ID value(s) in '{col}' for manual review",
                             affected_fields=[str(col)],
                             risk="high",
@@ -206,7 +206,7 @@ def apply_cleaning_plan(df: pd.DataFrame, plan: List[CleaningStep]) -> Tuple[pd.
                 step.rows_affected = dups_count
                 step.status = "applied"
 
-            elif step.step_id == "dedupe_duplicate_ids":
+            elif step.step_id.startswith("dedupe_duplicate_ids_"):
                 # Conservative: do NOT drop rows, only count and skip
                 total_dups = 0
                 for col in step.affected_fields:
@@ -256,7 +256,7 @@ def validate_cleaning(df_before: pd.DataFrame, df_after: pd.DataFrame, plan: Lis
 
     # 3. Check for skipped or failed steps
     for s in plan:
-        if s.status == "skipped" and s.step_id == "dedupe_duplicate_ids" and s.rows_affected > 0:
+        if s.status == "skipped" and s.step_id.startswith("dedupe_duplicate_ids_") and s.rows_affected > 0:
             for f in s.affected_fields:
                 msg = f"{f}: {s.rows_affected} duplicate ids remain (not dropped)"
                 if msg not in unresolved_issues:

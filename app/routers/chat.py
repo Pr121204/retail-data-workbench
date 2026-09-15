@@ -158,6 +158,11 @@ def create_chat_turn(run_id: str, session_id: str, request: TurnRequest, db: Ses
         )
         turn.plan_source = "analytics_capability"
         turn.answer_text = answer_text
+        result["lineage"] = {
+            "run_id": run.id,
+            "dataset_stage": "clean",
+            "dataset_version": f"run:{run.id}:clean",
+        }
         turn.evidence_json = json.dumps(result)
         db.add(turn)
         db.commit()
@@ -223,7 +228,15 @@ def create_chat_turn(run_id: str, session_id: str, request: TurnRequest, db: Ses
         db.refresh(turn)
         return _turn_to_dict(turn)
 
-    execution_result = execute_plan(validated_plan, clean_datasets)
+    execution_result = execute_plan(
+        validated_plan,
+        clean_datasets,
+        evidence_context={
+            "run_id": run.id,
+            "dataset_stage": "clean",
+            "dataset_version": f"run:{run.id}:clean",
+        },
+    )
 
     # Update carried-over context for the next turn
     session.active_filters_json = json.dumps(

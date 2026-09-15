@@ -33,6 +33,13 @@ def safe_join(
     """
     Performs a validated cross-dataset join with fan-out check and unmatched row tracking.
     """
+    if how not in {"left", "inner", "right", "outer"}:
+        raise ValueError(f"Unsupported join mode '{how}'")
+    if left_key not in left_df.columns:
+        raise ValueError(f"Left join key '{left_key}' is missing")
+    if right_key not in right_df.columns:
+        raise ValueError(f"Right join key '{right_key}' is missing")
+
     # 1. Check right_key uniqueness in right_df BEFORE joining
     right_key_series = right_df[right_key].dropna()
     fan_out_duplicates = int(right_key_series.duplicated().sum())
