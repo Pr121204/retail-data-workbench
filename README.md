@@ -5,12 +5,18 @@ natural-language questions through a **plan → validate → execute** pipeline
 with a full evidence trail. Includes a minimal React UI, a headless batch
 evaluator, and a prompt-injection defense model that is proven by tests.
 
-**Track: Backend / Data Engineering.** This submission deliberately declares
-the Backend/Data-Eng specialization: the differentiators are the background
-job/state model, upload validation and per-run ownership isolation, bounded
-memory strategies, structured errors, and observability — not UI surface.
-The React panel is a thin demo client; deep plan/evidence inspection is
-available via the API and the batch evaluator.
+**Track: AI Engineering.** The differentiators here are the LLM-to-plan
+translation layer (`llm_planner.py`) with mock/live modes and graceful fallback
+on invalid JSON or API failure, the allow-list plan validator that is the
+actual security boundary regardless of whether a plan came from a human or the
+model, the multi-turn chat session with context carry-forward, the
+prompt-injection defense suite (`tests/test_prompt_injection.py`), and the
+batch evaluator's chat-quality assertions (`expected_status`, `answer_contains`,
+`evidence_keys`, etc.). The background job mode, per-run ownership isolation,
+and observability logging were added as supporting reliability infrastructure —
+they hold the pipeline steady under the same conditions (retries, timeouts,
+malformed input) that stress the AI layer, but they are not the specialization
+being scored.
 
 ## Architecture
 
