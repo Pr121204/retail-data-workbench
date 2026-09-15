@@ -19,6 +19,11 @@ class Run(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     status = Column(String, nullable=False, default="pending")
+    # Optional opaque ownership token. Set from the X-Run-Owner header at
+    # upload time; when present, every run-scoped endpoint requires the same
+    # header (403 otherwise). Runs created without it stay publicly addressable
+    # (single-tenant / demo mode) for backward compatibility.
+    owner_token = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, default=get_utc_now)
     updated_at = Column(DateTime, nullable=False, default=get_utc_now, onupdate=get_utc_now)
     error_message = Column(Text, nullable=True)

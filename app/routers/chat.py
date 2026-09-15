@@ -5,8 +5,9 @@ treated as a black box — this layer only adds intent gating, context
 carry-forward, and persistence of turns.
 """
 import json
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,7 @@ from app.db import get_db
 from app.models.chat import ChatSession, ChatTurn
 from app.models.run import Dataset, Run
 from app.services.chat_intent import classify_question, match_analytics_capability
+from app.services.csv_io import read_csv_robust
 from app.services.chat_analytics import run_analytics_capability
 from app.services.chat_session import (
     apply_active_filters_to_plan,
@@ -23,6 +25,7 @@ from app.services.chat_session import (
 from app.services.llm_planner import generate_plan
 from app.services.plan_executor import execute_plan
 from app.services.plan_validator import PlanValidationError, validate_plan
+from app.routers.runs import _require_run_owner
 
 router = APIRouter(prefix="/runs", tags=["chat"])
 
@@ -60,7 +63,7 @@ def _load_clean_datasets(db: Session, run: Run) -> dict:
     clean_datasets = {}
     for ds in run.datasets:
         if ds.stage == "clean":
-            clean_datasets[ds.name] = pd.read_csv(ds.file_path)
+            clean_datasets[ds.name] = read_csv_robust(ds.file_path)
     return clean_datasets
 
 
@@ -73,13 +76,18 @@ def _load_clean_datasets(db: Session, run: Run) -> dict:
     status_code=status.HTTP_200_OK,
     response_model=CreateSessionResponse,
 )
-def create_chat_session(run_id: str, db: Session = Depends(get_db)):
+def create_chat_session(
+    run_id: str,
+    db: Session = Depends(get_db),
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
+):
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Run '{run_id}' not found",
         )
+    _require_run_owner(run, x_run_owner)
 
     session = ChatSession(run_id=run.id)
     db.add(session)
@@ -93,7 +101,13 @@ def create_chat_session(run_id: str, db: Session = Depends(get_db)):
     "/{run_id}/chat/sessions/{session_id}/turns",
     status_code=status.HTTP_200_OK,
 )
-def create_chat_turn(run_id: str, session_id: str, request: TurnRequest, db: Session = Depends(get_db)):
+def create_chat_turn(
+    run_id: str,
+    session_id: str,
+    request: TurnRequest,
+    db: Session = Depends(get_db),
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
+):
     question = (request.question or "").strip()
     if not question:
         raise HTTPException(
@@ -115,6 +129,8 @@ def create_chat_turn(run_id: str, session_id: str, request: TurnRequest, db: Ses
 
     # The run must have clean datasets to answer anything
     run = db.query(Run).filter(Run.id == run_id).first()
+    if run:
+        _require_run_owner(run, x_run_owner)
     clean_datasets = _load_clean_datasets(db, run) if run else {}
     dataset_names = sorted(clean_datasets.keys())
 
@@ -270,7 +286,12 @@ def create_chat_turn(run_id: str, session_id: str, request: TurnRequest, db: Ses
 
 
 @router.get("/{run_id}/chat/sessions/{session_id}", status_code=status.HTTP_200_OK)
-def get_chat_session(run_id: str, session_id: str, db: Session = Depends(get_db)):
+def get_chat_session(
+    run_id: str,
+    session_id: str,
+    db: Session = Depends(get_db),
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
+):
     session = (
         db.query(ChatSession)
         .filter(ChatSession.id == session_id, ChatSession.run_id == run_id)
@@ -281,6 +302,9 @@ def get_chat_session(run_id: str, session_id: str, db: Session = Depends(get_db)
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Chat session '{session_id}' not found for run '{run_id}'",
         )
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if run:
+        _require_run_owner(run, x_run_owner)
 
     return {
         "session_id": session.id,

@@ -70,6 +70,40 @@
       "datasets": [
         "data/samples/does_not_exist.csv"
       ]
+    },
+    {
+      "type": "cleaning",
+      "id": "case_007_all_null_column",
+      "datasets": [
+        "data/samples/edge/allnull.csv"
+      ]
+    },
+    {
+      "type": "chat",
+      "id": "case_008_latin1_encoding",
+      "datasets": [
+        "data/samples/edge/customers.csv"
+      ],
+      "question": "Show me all customers",
+      "expected": {
+        "expected_status": "ok",
+        "min_result_rows": 1
+      }
+    },
+    {
+      "type": "chat",
+      "id": "case_009_large_file",
+      "datasets": [
+        "data/samples/edge/orders.csv"
+      ],
+      "question": "What is the average order value?",
+      "expected": {
+        "expected_status": "ok",
+        "answer_contains": ["Found 1 result"],
+        "evidence_keys": ["row_count_before_filter"],
+        "evidence_equals": {"row_count_before_filter": 100000},
+        "min_result_rows": 1
+      }
     }
   ]
 }

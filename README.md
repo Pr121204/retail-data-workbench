@@ -5,6 +5,13 @@ natural-language questions through a **plan → validate → execute** pipeline
 with a full evidence trail. Includes a minimal React UI, a headless batch
 evaluator, and a prompt-injection defense model that is proven by tests.
 
+**Track: Backend / Data Engineering.** This submission deliberately declares
+the Backend/Data-Eng specialization: the differentiators are the background
+job/state model, upload validation and per-run ownership isolation, bounded
+memory strategies, structured errors, and observability — not UI surface.
+The React panel is a thin demo client; deep plan/evidence inspection is
+available via the API and the batch evaluator.
+
 ## Architecture
 
 ```
@@ -53,6 +60,7 @@ decides, enforces, or computes is deterministic code.**
 | Question → plan *suggestion* | LLM (Gemini, optional) or mock planner | convenience only; output is untrusted |
 | Scope/ambiguity gating | code (`chat_intent.py` heuristics) | predictable, testable, conservative |
 | Retail business logic (return rate, stockouts…) | code (`analytics.py`) | the LLM cannot invent metrics; no returns column exists, "return" = `revenue < 0` is a *code* decision |
+| Category variant merging (`Electronic`/`Electronics`) | code (`cleaning.py`) | mechanical equivalence only — deterministic, auditable merge map; synonyms are never merged |
 | Plan safety (datasets, fields, joins, limits) | code (`plan_validator.py` allow-lists) | the validator, not the LLM, is the security boundary |
 | Execution & numbers | code (`plan_executor.py`, pandas) | arithmetic must be deterministic and reproducible |
 | Answer text | code (string templates over computed results) | grounding: every number in prose comes from the evidence dict |
@@ -85,6 +93,37 @@ created.
 Delete `retail.db` whenever the schema changed before starting the server —
 `Base.metadata.create_all` only adds missing tables, it does not migrate.
 
+### What you should see on a sample run
+
+Upload the 5 sample CSVs, profile, clean: customers 80→76, stores 10→9,
+orders 300→297, products 60→60 (the category-variant merge collapses
+`Electronic` into `Electronics` without dropping product rows). Chat:
+"revenue by category" → Electronics 11414.66 (62 orders, AOV 184.11), all 7
+categories combined 51170.5; return-rate leader Home & Office 3.3% (1 of 30);
+West-scoped: 146 of 297 orders, 24239.18, Footwear 6.2% (1 of 16).
+
+### Long-running stages, ownership & observability
+
+- **Background mode:** `POST /runs/{id}/profile?wait=false` and
+  `POST /runs/{id}/clean?wait=false` return **202** immediately with a
+  `running_profile` / `running_clean` state and execute as background tasks
+  with a dedicated DB session. Any failure marks the run `failed` with a
+  persisted `error_message` — state is never silently stuck. Default is
+  `wait=true` (synchronous), so existing clients are unaffected.
+- **Per-run ownership (data isolation):** pass `X-Run-Owner: <token>` at
+  upload time and every subsequent call on that run must present the same
+  header (403 otherwise). Runs uploaded without the token stay publicly
+  addressable — a deliberate single-tenant/demo trade-off, documented here
+  and exercised by `tests/test_ownership.py`.
+- **Observability:** every HTTP request is logged with an `X-Request-Id`
+  (honoured if supplied by a proxy), method, path, status and duration; the
+  id is echoed in the response. Unhandled errors are logged with the same id
+  before propagating.
+- **Upload validation:** `.csv` extension, per-file and total size caps,
+  duplicate-name rejection, and a pre-write parse + binary-sniff (NUL bytes)
+  + header-only rejection — all before a run row is created, with structured
+  4xx errors (`tests/test_upload.py`).
+
 ## Run Frontend
 
 A minimal React UI (Vite) lives in `frontend/`. The backend must be running
@@ -115,7 +154,11 @@ python -m app.evaluate --input data/samples/evaluation_cases.json \
 Runs cleaning/chat/join cases headlessly through the same service functions
 as the API. One failed case never aborts the batch (`status: "error"` +
 traceback artifact); results include per-case profiles, cleaning plans, chat
-turns with evidence, and join reports.
+turns with evidence, and join reports. The committed case file includes edge
+cases from the brief — an all-null column, a latin-1-encoded file, and a
+100,000-row order file (generated deterministically by
+`scripts/generate_edge_cases.py`) — alongside the intentional
+failure-isolation demo.
 
 Chat cases can assert `expected_status`, `min_result_rows`,
 `result_row_count`, `plan_intent`, `plan_dataset`, `answer_contains`,
@@ -184,6 +227,14 @@ Trade-offs (deliberate choices, with their costs):
 - **Evidence-first answers.** `answer_text` is a short template summary; the
   JSON evidence is the source of truth. Auditability was prioritised over
   polished prose.
+- **Category-variant merging is mechanical, not semantic.** Labels equal after
+  removing case/whitespace/punctuation — or differing only by a trailing
+  plural — are merged to the most frequent spelling (`Electronic` →
+  `Electronics`, 57 vs 5 on the sample data). Synonyms (`Tee`/`T-Shirt`) are
+  never merged; the step reason discloses this limitation and the merge map
+  travels in the plan for auditability. The proposal pass simulates earlier
+  steps so rows made identical *by merging* are deduped in the same run —
+  re-cleaning is idempotent with zero row loss on the sample data.
 
 Known limitations:
 
@@ -191,9 +242,6 @@ Known limitations:
   with `revenue < 0` (there is no returns column), and the generated samples
   contain few such rows — a region-scoped answer can rest on a single return
   (e.g. "Footwear 6.2%" = 1 of 16 West orders). Grounded, but directional.
-- **Near-duplicate category names are not merged** (`Electronic` vs
-  `Electronics`): cleaning normalises case/whitespace but does not fuzzy-match
-  category labels, so they remain separate rows in analytics.
 - Region carry-forward covers **equality constraints only**; range filters
   (e.g. `stock_quantity < 10`) are intentionally not carried, since the flat
   `active_filters` shape would misrepresent them as equalities.

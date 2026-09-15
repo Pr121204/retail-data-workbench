@@ -1,18 +1,21 @@
 import io
 import json
+import logging
 import os
 from pathlib import Path
 from typing import List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Header, HTTPException, UploadFile, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.db import get_db
+from app.db import get_db, SessionLocal
 from app.config import settings
 from app.models.run import Dataset, Run
 from app.services.analytics import compute_all_analytics
+from app.services.csv_io import read_csv_robust
 from app.services.cleaning import apply_cleaning_plan, build_cleaning_plan, validate_cleaning
 from app.services.joins import get_join_config, safe_join
 from app.services.llm_planner import generate_plan
@@ -21,6 +24,8 @@ from app.services.plan_validator import PlanValidationError, validate_plan
 from app.services.profiling import profile_dataframe
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+
+logger = logging.getLogger("retail_workbench.runs")
 
 BASE_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "runs"
 
@@ -35,10 +40,26 @@ class QueryRequest(BaseModel):
     question: str
 
 
+def _require_run_owner(run: Run, x_run_owner: Optional[str]) -> None:
+    """Enforce optional per-run ownership via the X-Run-Owner header.
+
+    Runs uploaded WITHOUT an owner token stay publicly addressable (single-
+    tenant demo mode, backward compatible). Runs uploaded WITH a token require
+    the same token on every subsequent run-scoped request — data isolation
+    without introducing a full auth system.
+    """
+    if run.owner_token and run.owner_token != (x_run_owner or ""):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Run is owned by another token; supply the matching X-Run-Owner header",
+        )
+
+
 @router.post("/upload", status_code=status.HTTP_200_OK)
 async def upload_runs(
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
 ):
     if not files:
         raise HTTPException(
@@ -82,15 +103,27 @@ async def upload_runs(
                 detail="Total uploaded content exceeds the configured limit",
             )
         try:
-            pd.read_csv(io.BytesIO(content))
+            df_probe = pd.read_csv(io.BytesIO(content))
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"File '{filename}' is not a readable CSV: {exc}",
             )
+        # Binary junk named .csv can still parse as a tiny garbage table;
+        # reject NUL bytes up front and files with no data rows.
+        if b"\x00" in content[:8192]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"File '{filename}' contains binary data and is not a text CSV",
+            )
+        if len(df_probe) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"File '{filename}' is empty or header-only (no data rows)",
+            )
         prepared_files.append((filename, dataset_name, content))
 
-    run = Run(status="pending")
+    run = Run(status="pending", owner_token=(x_run_owner or None))
     db.add(run)
     db.flush()  # populate run.id
 
@@ -108,7 +141,7 @@ async def upload_runs(
 
         # Compute row and column count using pandas
         try:
-            df = pd.read_csv(file_path)
+            df = read_csv_robust(file_path)
             row_count = int(len(df))
             column_count = int(len(df.columns))
         except Exception:
@@ -143,60 +176,99 @@ async def upload_runs(
     }
 
 
-@router.post("/{run_id}/profile", status_code=status.HTTP_200_OK)
-def profile_run(run_id: str, db: Session = Depends(get_db)):
+# ---------------------------------------------------------------------------
+# Long-running pipeline stages: synchronous by default, background on demand.
+# Background mode ("?wait=false") returns 202 immediately and executes with a
+# dedicated DB session; any failure marks the run "failed" with a persisted
+# error_message, so state is always inspectable and never silently stuck.
+# ---------------------------------------------------------------------------
+
+def _profile_impl(run_id: str, db: Session) -> dict:
     run = db.query(Run).filter(Run.id == run_id).first()
-    if not run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run '{run_id}' not found",
-        )
-    if run.status != "profiling":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Run status must be 'profiling' to profile, but is '{run.status}'",
-        )
+    # "running_profile" = queued via ?wait=false; both states may execute.
+    if not run or run.status not in {"profiling", "running_profile"}:
+        raise ValueError(f"Run '{run_id}' not found or not in a profileable state")
 
     profiles = {}
     for ds in run.datasets:
         if ds.stage == "raw":
             try:
-                df = pd.read_csv(ds.file_path)
+                df = read_csv_robust(ds.file_path)
             except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to read dataset file at '{ds.file_path}': {e}",
-                )
+                raise ValueError(f"Failed to read dataset file at '{ds.file_path}': {e}")
             profile = profile_dataframe(df)
             ds.profile_json = json.dumps(profile)
             profiles[ds.name] = profile
 
     run.status = "profiled"
     db.commit()
-    db.refresh(run)
-
-    return {
-        "run_id": run.id,
-        "status": "profiled",
-        "profiles": profiles,
-    }
+    return {"run_id": run.id, "status": "profiled", "profiles": profiles}
 
 
-@router.post("/{run_id}/clean", status_code=status.HTTP_200_OK)
-def clean_run(run_id: str, db: Session = Depends(get_db)):
+def _run_background_stage(stage_name: str, run_id: str, impl) -> None:
+    """Execute a pipeline stage as a background task with its own DB session.
+
+    The request-scoped session is closed by the time a background task runs,
+    so a fresh session is mandatory. Failures set run.status = "failed" and
+    persist run.error_message — never silently swallowed.
+    """
+    db = SessionLocal()
+    try:
+        impl(run_id, db)
+        logger.info("Background %s completed for run %s", stage_name, run_id)
+    except Exception as exc:
+        logger.exception("Background %s failed for run %s", stage_name, run_id)
+        try:
+            run = db.query(Run).filter(Run.id == run_id).first()
+            if run:
+                run.status = "failed"
+                run.error_message = f"{stage_name} failed: {exc}"
+                db.commit()
+        except Exception:
+            db.rollback()
+    finally:
+        db.close()
+
+
+@router.post("/{run_id}/profile", status_code=status.HTTP_200_OK)
+def profile_run(
+    run_id: str,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    wait: bool = True,
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
+):
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Run '{run_id}' not found",
         )
-    if run.status != "profiled":
+    _require_run_owner(run, x_run_owner)
+    if run.status != "profiling":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Run status must be 'profiled' to clean, but is '{run.status}'",
+            detail=f"Run status must be 'profiling' to profile, but is '{run.status}'",
         )
 
-    clean_dir = BASE_DATA_DIR / run.id / "clean"
+    if not wait:
+        run.status = "running_profile"
+        db.commit()
+        background.add_task(_run_background_stage, "profile", run.id, _profile_impl)
+        return JSONResponse(status_code=202, content={"run_id": run.id, "status": "running_profile"})
+
+    result = _profile_impl(run_id, db)
+    db.refresh(run)
+    return result
+
+
+def _clean_impl(run_id: str, db: Session) -> dict:
+    run = db.query(Run).filter(Run.id == run_id).first()
+    # "running_clean" = queued via ?wait=false; both states may execute.
+    if not run or run.status not in {"profiled", "running_clean"}:
+        raise ValueError(f"Run '{run_id}' not found or not in a cleanable state")
+
+    clean_dir = BASE_DATA_DIR / run_id / "clean"
     clean_dir.mkdir(parents=True, exist_ok=True)
 
     results = {}
@@ -204,12 +276,9 @@ def clean_run(run_id: str, db: Session = Depends(get_db)):
 
     for ds in raw_datasets:
         try:
-            df_raw = pd.read_csv(ds.file_path)
+            df_raw = read_csv_robust(ds.file_path)
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to read dataset '{ds.name}' at '{ds.file_path}': {e}",
-            )
+            raise ValueError(f"Failed to read dataset '{ds.name}' at '{ds.file_path}': {e}")
 
         plan = build_cleaning_plan(df_raw, ds.name)
         df_clean, updated_plan = apply_cleaning_plan(df_raw, plan)
@@ -223,7 +292,7 @@ def clean_run(run_id: str, db: Session = Depends(get_db)):
         plan_dicts = [step.model_dump() for step in updated_plan]
 
         clean_ds = Dataset(
-            run_id=run.id,
+            run_id=run_id,
             name=ds.name,
             stage="clean",
             file_path=str(clean_csv_path),
@@ -242,23 +311,54 @@ def clean_run(run_id: str, db: Session = Depends(get_db)):
 
     run.status = "cleaned"
     db.commit()
-    db.refresh(run)
+    return {"run_id": run_id, "status": "cleaned", "results": results}
 
-    return {
-        "run_id": run.id,
-        "status": "cleaned",
-        "results": results,
-    }
+
+@router.post("/{run_id}/clean", status_code=status.HTTP_200_OK)
+def clean_run(
+    run_id: str,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    wait: bool = True,
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
+):
+    run = db.query(Run).filter(Run.id == run_id).first()
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run '{run_id}' not found",
+        )
+    _require_run_owner(run, x_run_owner)
+    if run.status != "profiled":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Run status must be 'profiled' to clean, but is '{run.status}'",
+        )
+
+    if not wait:
+        run.status = "running_clean"
+        db.commit()
+        background.add_task(_run_background_stage, "clean", run.id, _clean_impl)
+        return JSONResponse(status_code=202, content={"run_id": run.id, "status": "running_clean"})
+
+    result = _clean_impl(run_id, db)
+    db.refresh(run)
+    return result
 
 
 @router.get("/{run_id}", status_code=status.HTTP_200_OK)
-def get_run(run_id: str, db: Session = Depends(get_db)):
+def get_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
+):
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Run with id '{run_id}' not found",
         )
+    _require_run_owner(run, x_run_owner)
 
     return {
         "id": run.id,
@@ -286,13 +386,19 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{run_id}/join", status_code=status.HTTP_200_OK)
-def join_datasets(run_id: str, request: JoinRequest, db: Session = Depends(get_db)):
+def join_datasets(
+    run_id: str,
+    request: JoinRequest,
+    db: Session = Depends(get_db),
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
+):
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Run '{run_id}' not found",
         )
+    _require_run_owner(run, x_run_owner)
 
     # Check status is "cleaned" or later
     if run.status not in ["cleaned", "validated"]:
@@ -361,13 +467,18 @@ def join_datasets(run_id: str, request: JoinRequest, db: Session = Depends(get_d
 
 
 @router.get("/{run_id}/analytics", status_code=status.HTTP_200_OK)
-def get_run_analytics(run_id: str, db: Session = Depends(get_db)):
+def get_run_analytics(
+    run_id: str,
+    db: Session = Depends(get_db),
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
+):
     run = db.query(Run).filter(Run.id == run_id).first()
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Run '{run_id}' not found",
         )
+    _require_run_owner(run, x_run_owner)
 
     if run.status not in ["cleaned", "validated"]:
         raise HTTPException(
@@ -379,7 +490,7 @@ def get_run_analytics(run_id: str, db: Session = Depends(get_db)):
     for ds in run.datasets:
         if ds.stage == "clean":
             try:
-                clean_datasets[ds.name] = pd.read_csv(ds.file_path)
+                clean_datasets[ds.name] = read_csv_robust(ds.file_path)
             except Exception as e:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -395,6 +506,7 @@ def query_run(
     run_id: str,
     request: QueryRequest,
     db: Session = Depends(get_db),
+    x_run_owner: Optional[str] = Header(None, alias="X-Run-Owner"),
 ):
     """
     Accepts a natural language question, generates a QueryPlan via the LLM
@@ -407,6 +519,7 @@ def query_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Run '{run_id}' not found",
         )
+    _require_run_owner(run, x_run_owner)
 
     if run.status not in ["cleaned", "validated"]:
         raise HTTPException(
@@ -422,7 +535,7 @@ def query_run(
     for ds in run.datasets:
         if ds.stage == "clean":
             try:
-                clean_datasets[ds.name] = pd.read_csv(ds.file_path)
+                clean_datasets[ds.name] = read_csv_robust(ds.file_path)
             except Exception as e:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

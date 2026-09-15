@@ -91,6 +91,23 @@ def test_upload_rejects_unreadable_csv_before_creating_run():
     assert "not a readable CSV" in response.json()["detail"]
 
 
+def test_upload_rejects_binary_junk_and_header_only_files():
+    with TestClient(app) as client:
+        binary_junk = client.post(
+            "/runs/upload",
+            files=[("files", ("junk.csv", b"id,name\n1,\x00\x01\x02binary", "text/csv"))],
+        )
+        assert binary_junk.status_code == 422
+        assert "binary" in binary_junk.json()["detail"].lower()
+
+        header_only = client.post(
+            "/runs/upload",
+            files=[("files", ("empty.csv", b"id,name\n", "text/csv")),],
+        )
+        assert header_only.status_code == 422
+        assert "header-only" in header_only.json()["detail"].lower()
+
+
 def test_upload_enforces_file_count_and_byte_limits(monkeypatch):
     from app.config import settings
 

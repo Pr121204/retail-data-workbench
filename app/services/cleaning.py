@@ -1,4 +1,6 @@
 from typing import Any, Dict, List, Tuple
+import re
+
 import pandas as pd
 from pydantic import BaseModel
 
@@ -11,6 +13,7 @@ class CleaningStep(BaseModel):
     source: str = "code"
     status: str = "proposed"  # "proposed", "applied", "skipped", "failed"
     rows_affected: int = 0
+    params: Dict[str, Any] = {}  # optional step-specific data (e.g. merge maps)
 
 
 def is_text_column(series: pd.Series) -> bool:
@@ -71,6 +74,81 @@ def build_cleaning_plan(df: pd.DataFrame, dataset_name: str) -> List[CleaningSte
                             )
                         )
 
+    # 2b. Suspected category variants: labels that are equal after removing
+    # case/whitespace/punctuation, or differ only by a trailing plural "s"
+    # (e.g. "Electronic" vs "Electronics"). Synonyms like "Tee"/"T-Shirt" are
+    # deliberately NOT merged — only mechanical equivalence. Detection is
+    # deterministic; the most frequent spelling becomes canonical and the full
+    # merge map travels inside the step (auditable, and applied before the
+    # exact-duplicate pass so newly-identical rows are dropped in the same run,
+    # keeping re-cleaning idempotent).
+    pending_variant_merges: Dict[str, Dict[str, str]] = {}
+    for col in df.columns:
+        col_str = str(col).lower()
+        if col_str.endswith("_id") or col_str == "sku" or "name" in col_str:
+            continue  # identifiers/proper names must not be collapsed
+        if not is_text_column(df[col]):
+            continue
+        raw_non_null = df[col].dropna().astype(str)
+        if len(raw_non_null) == 0:
+            continue
+        # Simulate the trim + case-normalisation steps that run earlier in the
+        # plan, so the merge map's keys match values as they will be at
+        # execution time.
+        normalized = raw_non_null.str.strip().str.lower().str.title()
+        value_counts = normalized.value_counts()
+        if len(value_counts) < 2:
+            continue
+
+        def _key(value: str) -> str:
+            return re.sub(r"[^a-z0-9]", "", value.lower())
+
+        all_keys = {_key(v) for v in value_counts.index}
+        all_keys.discard("")
+
+        def _resolve(key: str) -> str:
+            # "Electronics" merges into "Electronic" when both appear.
+            if key.endswith("s") and key[:-1] in all_keys:
+                return key[:-1]
+            return key
+
+        groups: Dict[str, List[str]] = {}
+        for value in value_counts.index:
+            key = _key(value)
+            if not key:
+                continue
+            groups.setdefault(_resolve(key), []).append(value)
+
+        merge_map: Dict[str, str] = {}
+        merges: List[Tuple[str, str]] = []
+        for variants in groups.values():
+            if len(variants) < 2:
+                continue
+            # Deterministic winner: highest frequency, then case-insensitive
+            # alphabetical (so "Electronic" beats "ELECTRONICS" on a tie).
+            canonical = sorted(variants, key=lambda v: (-int(value_counts[v]), v.lower(), v))[0]
+            for variant in variants:
+                merge_map[variant] = canonical
+            merges.extend((canonical, v) for v in variants if v != canonical)
+
+        if merges:
+            steps.append(
+                CleaningStep(
+                    step_id=f"normalize_category_variants_{col}",
+                    reason=(
+                        f"Merge suspected category variants in '{col}': "
+                        + "; ".join(f"'{v}' -> '{c}'" for c, v in sorted(merges))
+                        + " (canonical = most frequent spelling; synonyms are NOT merged)"
+                    ),
+                    affected_fields=[str(col)],
+                    risk="medium",
+                    source="code",
+                    status="proposed",
+                    params={"merge_map": merge_map},
+                )
+            )
+            pending_variant_merges[str(col)] = merge_map
+
     # 3. Numeric columns stored as object/string
     for col in df.columns:
         col_lower = str(col).lower()
@@ -101,13 +179,38 @@ def build_cleaning_plan(df: pd.DataFrame, dataset_name: str) -> List[CleaningSte
                 )
             )
 
-    # 5. Fully duplicate rows
-    if bool(df.duplicated().any()):
-        dup_count = int(df.duplicated().sum())
+    # 5. Fully duplicate rows — evaluated on a simulated view that applies
+    # the pending trim/case/variant-merge transformations first, so the count
+    # in the plan matches what execution will actually drop (including rows
+    # made identical only after category-variant merging). Without this, a
+    # re-clean would find and drop them later — neither idempotent nor honest.
+    work = df.copy()
+    for col in work.columns:
+        if is_text_column(work[col]):
+            work[col] = work[col].map(lambda x: x.strip() if isinstance(x, str) else x)
+    case_norm_cols = {
+        s.affected_fields[0] for s in steps if s.step_id.startswith("normalize_case_")
+    }
+    for vcol, vmap in pending_variant_merges.items():
+        if vcol in work.columns:
+            def _sim(x, vmap=vmap, do_case=vcol in case_norm_cols):
+                if isinstance(x, str):
+                    y = x.strip()
+                    if do_case:
+                        y = y.lower().title()
+                    return vmap.get(y, y)
+                return x
+
+            work[vcol] = work[vcol].map(_sim)
+    if bool(work.duplicated().any()):
+        dup_count = int(work.duplicated().sum())
+        reason = f"Remove {dup_count} exact duplicate row(s)"
+        if pending_variant_merges:
+            reason += " (including row(s) made identical by category-variant merging)"
         steps.append(
             CleaningStep(
                 step_id="dedupe_exact_rows",
-                reason=f"Remove {dup_count} exact duplicate row(s)",
+                reason=reason,
                 affected_fields=[str(c) for c in df.columns],
                 risk="low",
                 source="code",
@@ -173,6 +276,19 @@ def apply_cleaning_plan(df: pd.DataFrame, plan: List[CleaningStep]) -> Tuple[pd.
                 step.rows_affected = rows_affected
                 step.status = "applied"
 
+            elif step.step_id.startswith("normalize_category_variants_"):
+                merge_map = (step.params or {}).get("merge_map", {})
+                rows_affected = 0
+                for col in step.affected_fields:
+                    if col in df_clean.columns and merge_map:
+                        s = df_clean[col].dropna().astype(str)
+                        rows_affected += int(s.map(lambda x: merge_map.get(x, x)).ne(s).sum())
+                        df_clean[col] = df_clean[col].map(
+                            lambda x: merge_map.get(x, x) if isinstance(x, str) else x
+                        )
+                step.rows_affected = rows_affected
+                step.status = "applied"
+
             elif step.step_id.startswith("coerce_numeric_"):
                 rows_affected = 0
                 for col in step.affected_fields:
@@ -201,8 +317,22 @@ def apply_cleaning_plan(df: pd.DataFrame, plan: List[CleaningStep]) -> Tuple[pd.
                 step.status = "applied"
 
             elif step.step_id == "dedupe_exact_rows":
-                dups_count = int(df_clean.duplicated().sum())
-                df_clean = df_clean.drop_duplicates(keep="first").reset_index(drop=True)
+                # Duplicate detection runs on a view where pending category
+                # merges have been simulated, so rows that become identical
+                # only after variant merging are dropped in this same run —
+                # otherwise a re-clean would silently lose them later.
+                work = df_clean.copy()
+                for vstep in plan:
+                    if vstep.step_id.startswith("normalize_category_variants_"):
+                        merge_map = (vstep.params or {}).get("merge_map", {})
+                        for col in vstep.affected_fields:
+                            if col in work.columns:
+                                work[col] = work[col].map(
+                                    lambda x: merge_map.get(x, x) if isinstance(x, str) else x
+                                )
+                dup_mask = work.duplicated(keep="first")
+                dups_count = int(dup_mask.sum())
+                df_clean = df_clean[~dup_mask].reset_index(drop=True)
                 step.rows_affected = dups_count
                 step.status = "applied"
 

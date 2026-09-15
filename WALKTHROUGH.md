@@ -15,9 +15,11 @@ the mock pipeline is deterministic, so you should see the same values.
 Upload the 5 sample CSVs, click Profile, then Clean.
 
 **Point at:** the before→after table — customers 80→76, stores 10→9, orders
-300→297. "Cleaning is deterministic code, and it's honest about what it
-*didn't* do: the `skipped` column is a high-risk duplicate-ID step that is
-flagged for manual review instead of silently dropping rows."
+300→297, products 60→60 with `Electronic` merged into `Electronics`. "Cleaning
+is deterministic code, and it's honest about what it *didn't* do: the
+`skipped` column is a high-risk duplicate-ID step that is flagged for manual
+review instead of silently dropping rows. The category merge is mechanical —
+it even says in the step reason that synonyms are NOT merged."
 
 ## 0:50 — Analytics (30s)
 
@@ -30,7 +32,7 @@ the chat uses — no separate implementation to drift out of sync."
 
 Start Chat Session, ask: **"What is the revenue by category?"**
 
-- Green **ok** badge; answer names Apparel, 10761.65, AOV 173.57.
+- Green **ok** badge; answer names Electronics, 11414.66, AOV 184.11.
 - Expand **Evidence**: `plan.capability = "revenue_by_category"`,
   `computed_from` shows 297 orders and 10 excluded negative/null-revenue rows.
 
@@ -40,7 +42,7 @@ Start Chat Session, ask: **"What is the revenue by category?"**
 
 Follow up: **"Which categories had the highest return rate among those?"**
 
-- Electronics 3.4% (2 of 59). "Note the assumption shown in the evidence:
+- Home & Office 3.3% (1 of 30). "Note the assumption shown in the evidence:
   a 'return' is an order with negative revenue — a data-model decision made
   in code and disclosed in every answer."
 
@@ -69,9 +71,10 @@ Ask: **"What will our competitor's prices be next year?"** → red `refused`.
 > "Underneath this: any plan — human-typed or LLM-generated — passes the same
 > allow-list validator; a hostile `limit: 999999` plan is rejected in tests.
 > Poisoned cell text flows through as inert data, byte for byte, and is never
-> interpreted. 77 tests cover this, including a batch evaluator that runs the
-> whole pipeline headlessly — one deliberately broken case, and the other
-> five still pass."
+> interpreted. 101 tests cover this, including a batch evaluator that runs the
+> whole pipeline headlessly — edge cases like a 100k-row file, an all-null
+> column and a latin-1 encoding, plus one deliberately broken case, and the
+> other eight still pass."
 
 ## 4:45 — Close (15s)
 

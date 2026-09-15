@@ -40,6 +40,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.services.chat_intent import classify_question, match_analytics_capability
+from app.services.csv_io import read_csv_robust
 from app.services.chat_session import (
     apply_active_filters_to_plan,
     extract_filters_from_question,
@@ -100,7 +101,7 @@ def run_cleaning_pipeline(
 
     for entry in dataset_paths:
         name = entry["name"]
-        df_raw = pd.read_csv(entry["path"])
+        df_raw = read_csv_robust(entry["path"])
         datasets[name] = df_raw
 
         profile_before[name] = profile_dataframe(df_raw)

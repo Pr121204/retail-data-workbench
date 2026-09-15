@@ -45,14 +45,14 @@ def test_evaluator_batch_survives_broken_case(tmp_path):
     data = json.loads(output_path.read_text(encoding="utf-8"))
 
     meta = data["run_metadata"]
-    assert meta["total_cases"] == 6
-    assert meta["passed"] == 5
+    assert meta["total_cases"] == 9
+    assert meta["passed"] == 8
     assert meta["failed"] == 1
     assert meta["intentional_failures"] == ["case_006_broken"]
     assert meta["started_at"] and meta["finished_at"]
 
     cases = data["cases"]
-    assert len(cases) == 6
+    assert len(cases) == 9
 
     broken = [c for c in cases if c["status"] == "error"]
     assert len(broken) == 1
@@ -63,10 +63,10 @@ def test_evaluator_batch_survives_broken_case(tmp_path):
     assert "FileNotFoundError" in broken["error"]
 
     ok_cases = [c for c in cases if c["status"] == "ok"]
-    assert len(ok_cases) == 5
+    assert len(ok_cases) == 8
 
-    # Per-case artifact dirs were created
-    for case_id in ["case_001", "case_002", "case_003", "case_006_broken"]:
+    # Per-case artifact dirs were created (including the edge cases)
+    for case_id in ["case_001", "case_002", "case_003", "case_006_broken", "case_007_all_null_column", "case_009_large_file"]:
         assert (artifacts_dir / case_id).is_dir(), f"missing artifacts dir for {case_id}"
 
     # Broken case gets a traceback artifact for debugging
@@ -83,6 +83,16 @@ def test_evaluator_batch_survives_broken_case(tmp_path):
     rev_turn = revenue["chat_evaluation"][0]
     assert rev_turn["status"] == "ok"
     assert rev_turn["result_row_count"] >= 1
+
+    # Edge cases: all-null column survives; large file is fully processed.
+    allnull = next(c for c in cases if c["id"] == "case_007_all_null_column")
+    assert allnull["status"] == "ok"
+    assert allnull["validation"]["allnull"]["row_count_after"] == 20
+
+    large = next(c for c in cases if c["id"] == "case_009_large_file")
+    assert large["status"] == "ok"
+    large_turn = large["chat_evaluation"][0]
+    assert large_turn["evidence"]["row_count_before_filter"] == 100000
 
 
 def test_evaluator_rejects_unsupported_expectations(tmp_path):
