@@ -33,6 +33,9 @@ def test_evaluator_batch_survives_broken_case(tmp_path):
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert "Evaluation complete:" in result.stdout
+    # The intentional demo failure must be called out in the CLI output so a
+    # bare "5/6 cases passed" is never mistaken for a defect.
+    assert "intentional failure-isolation demo" in result.stdout
 
     assert output_path.exists(), "results.json was not written"
     data = json.loads(output_path.read_text(encoding="utf-8"))
@@ -41,6 +44,7 @@ def test_evaluator_batch_survives_broken_case(tmp_path):
     assert meta["total_cases"] == 6
     assert meta["passed"] == 5
     assert meta["failed"] == 1
+    assert meta["intentional_failures"] == ["case_006_broken"]
     assert meta["started_at"] and meta["finished_at"]
 
     cases = data["cases"]
@@ -50,6 +54,7 @@ def test_evaluator_batch_survives_broken_case(tmp_path):
     assert len(broken) == 1
     broken = broken[0]
     assert broken["id"] == "case_006_broken"
+    assert broken["intentional_failure"] is True
     assert "does_not_exist" in broken["error"]
     assert "FileNotFoundError" in broken["error"]
 

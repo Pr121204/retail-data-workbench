@@ -19,6 +19,10 @@ Case types:
   - "join": cleaning pipeline, then safe_join on the named datasets; records
     the join report.
 
+A case may set "intentional_failure": true to mark a case that is *designed*
+to fail (e.g. case_006_broken, the failure-isolation demo). The CLI prints a
+clarifying note for such cases so the pass count is not mistaken for a defect.
+
 Note: the cleaning stage is run through the same functions the API's
 /clean endpoint calls (build_cleaning_plan / apply_cleaning_plan /
 validate_cleaning / profile_dataframe); datasets are NOT run through the
@@ -335,6 +339,7 @@ def evaluate(input_path: Path, output_path: Path, artifacts_dir: Path) -> dict:
                 "chat_evaluation": None,
                 "join_report": None,
                 "error": f"{type(e).__name__}: {e}",
+                "intentional_failure": bool(case.get("intentional_failure", False)),
                 "artifacts": {"cleaned_files": []},
             }
             if artifacts_dir is not None:
@@ -349,6 +354,9 @@ def evaluate(input_path: Path, output_path: Path, artifacts_dir: Path) -> dict:
     results["run_metadata"]["failed"] = sum(
         1 for c in results["cases"] if c["status"] == "error"
     )
+    results["run_metadata"]["intentional_failures"] = [
+        c["id"] for c in results["cases"] if c["status"] == "error" and c.get("intentional_failure")
+    ]
     results["run_metadata"]["finished_at"] = _utc_now_iso()
     return results
 
@@ -378,6 +386,18 @@ def main(argv: list[str] | None = None) -> int:
         f"Evaluation complete: {meta['passed']}/{meta['total_cases']} cases passed. "
         f"Results written to {output_path}."
     )
+    if meta["failed"]:
+        intentional = set(meta.get("intentional_failures", []))
+        failed_ids = [c["id"] for c in results["cases"] if c["status"] == "error"]
+        unexpected = [cid for cid in failed_ids if cid not in intentional]
+        if not unexpected:
+            print(
+                f"  ({len(failed_ids)} failed case(s): {', '.join(failed_ids)} - "
+                "intentional failure-isolation demo(s); see README.)"
+            )
+        else:
+            for cid in unexpected:
+                print(f"  (unexpected failure: {cid} — inspect its traceback artifact.)")
     return 0
 
 

@@ -66,6 +66,7 @@
     {
       "type": "cleaning",
       "id": "case_006_broken",
+      "intentional_failure": true,
       "datasets": [
         "data/samples/does_not_exist.csv"
       ]

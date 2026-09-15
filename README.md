@@ -112,6 +112,11 @@ as the API. One failed case never aborts the batch (`status: "error"` +
 traceback artifact); results include per-case profiles, cleaning plans, chat
 turns with evidence, and join reports.
 
+A case marked `"intentional_failure": true` (e.g. `case_006_broken`, the
+deliberate failure-isolation demo) is called out in the CLI output, so the
+pass count reads as designed behaviour rather than a defect; unexpected
+failures are flagged separately for inspection.
+
 ## Tests
 
 ```bash
